@@ -2,13 +2,19 @@
 # Termux -> Debian (proot) + herdr + Claude Code
 # Run from plain Termux:  bash termux-claude-setup.sh [-y]
 #
-# Asks one question: whether Termux should open Debian automatically.
+# Shows what it will install and asks to proceed. After installing, asks
+# whether Termux should open Debian automatically.
 # Options (env vars):
-#   AUTOSTART=1|0   answer that question up front (-y keeps the current setting)
+#   AUTOSTART=1|0   answer the autostart question up front (-y keeps the current setting)
 #   AUTO_HERDR=1|0  start herdr automatically when entering Debian (default: current setting, else 0)
 #   DEV_USER=name   non-root user inside Debian          (default: dev)
 #   LAUNCHER=name   Termux command that enters Debian    (default: dev)
+# -y skips both prompts.
 set -euo pipefail
+
+# Braces make bash read the whole script before running it, so 'curl ... | bash'
+# is safe even if a command below reads stdin.
+{
 
 DISTRO="debian"
 DEV_USER="${DEV_USER:-dev}"
@@ -19,7 +25,7 @@ MARK="# managed-by: termux-claude-setup"
 log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 for arg in "$@"; do
   case "$arg" in
     -y|--yes)  ASSUME_YES=1 ;;
@@ -28,8 +34,67 @@ for arg in "$@"; do
   esac
 done
 
+banner() {
+  local cols reset=$'\033[0m' dim=$'\033[2m' bold=$'\033[1m' i=0 line
+  cols=$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2) || true
+  # Orange-to-coral gradient, one shade per line
+  local shades=(214 208 209 203 204 205)
+  local art
+  if [ "${cols:-80}" -ge 50 ]; then
+    art=$(cat <<'ART'
+ ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
+██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
+██║     ██║     ███████║██║   ██║██║  ██║█████╗
+██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝
+╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
+ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝
+ART
+)
+  else
+    art=$(cat <<'ART'
+    _              _
+ __| |__ _ _  _ __| |___
+/ _| / _` | || / _` / -_)
+\__|_\__,_|\_,_\__,_\___|
+ART
+)
+  fi
+  echo
+  while IFS= read -r line; do
+    printf '\033[1;38;5;%sm%s%s\n' "${shades[i % ${#shades[@]}]}" "$line" "$reset"
+    i=$((i + 1))
+  done <<<"$art"
+  printf '\n  %s\033[38;5;214mcode%s %son Termux%s  -  Debian (proot) + herdr\n' "$bold" "$reset" "$bold" "$reset"
+  printf '  %sby%s \033[1;38;5;81m@dmdhrumilmistry%s\n' "$dim" "$reset" "$reset"
+  printf '  %sgithub.com/dmdhrumilmistry/termux-claude-code%s\n\n' "$dim" "$reset"
+}
+
+# ask VAR "question" default(y|n)
+# Uses VAR if it's already set to 1/0, the default with -y, otherwise prompts on the terminal.
+ask() {
+  local var=$1 q=$2 def=$3 ans hint
+  case "${!var:-}" in
+    1|y|Y|yes) printf -v "$var" 1; return ;;
+    0|n|N|no)  printf -v "$var" 0; return ;;
+  esac
+  if [ "$ASSUME_YES" = 1 ]; then
+    [ "$def" = y ] && printf -v "$var" 1 || printf -v "$var" 0
+    return
+  fi
+  [ -r /dev/tty ] || die "No terminal to ask on. Set $var=1 or $var=0, or pass -y."
+  [ "$def" = y ] && hint="Y/n" || hint="y/N"
+  while :; do
+    read -r -p "$q [$hint] " ans </dev/tty || die "Aborted."
+    case "${ans:-$def}" in
+      y|Y|yes|YES) printf -v "$var" 1; return ;;
+      n|N|no|NO)   printf -v "$var" 0; return ;;
+    esac
+  done
+}
+
 # ---------- 0. Sanity checks ----------
-[ -n "${PREFIX:-}" ] && [ -d "$PREFIX" ] && command -v pkg >/dev/null 2>&1   || die "Run this from Termux, not from inside Debian or another shell."
+[ -n "${PREFIX:-}" ] && [ -d "$PREFIX" ] && command -v pkg >/dev/null 2>&1 \
+  || die "Run this from Termux, not from inside Debian or another shell."
 [ "$(id -u)" != "0" ] || die "Don't run this as root in Termux."
 [[ "$DEV_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "Invalid DEV_USER: '$DEV_USER'"
 [[ "$LAUNCHER" =~ ^[A-Za-z0-9_.-]+$ ]]       || die "Invalid LAUNCHER: '$LAUNCHER'"
@@ -44,32 +109,27 @@ if [ -e "$LAUNCH_PATH" ] && ! grep -qE "$MARK|proot-distro login $DISTRO" "$LAUN
   die "'$LAUNCH_PATH' already exists and wasn't created by this script. Re-run with LAUNCHER=<other-name>."
 fi
 
-# ---------- 1. The one question: open Debian when Termux starts? ----------
-# Defaults to the current setting, so re-running and pressing Enter changes nothing.
-grep -q '# >>> debian-autostart >>>' "$TBRC" 2>/dev/null && def=y || def=n
-case "${AUTOSTART:-}" in
-  1|y|Y|yes) AUTOSTART=1 ;;
-  0|n|N|no)  AUTOSTART=0 ;;
-  *)
-    if [ "$ASSUME_YES" = 1 ]; then
-      [ "$def" = y ] && AUTOSTART=1 || AUTOSTART=0
-    else
-      [ -r /dev/tty ] || die "No terminal to ask on. Set AUTOSTART=1 or AUTOSTART=0, or pass -y."
-      [ "$def" = y ] && hint="Y/n" || hint="y/N"
-      while :; do
-        read -r -p "Open Debian automatically every time Termux starts? [$hint] " ans </dev/tty || die "Aborted."
-        case "${ans:-$def}" in
-          y|Y|yes|YES) AUTOSTART=1; break ;;
-          n|N|no|NO)   AUTOSTART=0; break ;;
-        esac
-      done
-    fi
-    ;;
-esac
+# ---------- 1. Banner + confirmation (nothing is changed before this) ----------
+banner
+cat <<PLAN
+This will:
+  - update and upgrade Termux packages, and install proot-distro
+  - remove the npm claude-code from Termux, if installed (it can't run on Android)
+  - install Debian (proot) if missing, with user '$DEV_USER' (passwordless sudo)
+  - install herdr and Claude Code inside Debian
+  - create the '$LAUNCHER' command to enter Debian
+  - add Esc/Tab/Ctrl/arrow keys to Termux, unless you have your own extra-keys
+
+PLAN
+PROCEED=
+ask PROCEED "Proceed?" y
+[ "$PROCEED" = 1 ] || { echo "Nothing changed."; exit 0; }
 
 # herdr autostart isn't asked; keep whatever is set up now unless AUTO_HERDR is given.
+# (Read-only peek, done before the Debian step rewrites .bashrc.)
 if [ -z "${AUTO_HERDR:-}" ]; then
-  proot-distro login "$DISTRO" -- grep -q CLAUDE_TERMUX_IN_HERDR "/home/$DEV_USER/.bashrc"     >/dev/null 2>&1 && AUTO_HERDR=1 || AUTO_HERDR=0
+  proot-distro login "$DISTRO" -- grep -q CLAUDE_TERMUX_IN_HERDR "/home/$DEV_USER/.bashrc" \
+    >/dev/null 2>&1 && AUTO_HERDR=1 || AUTO_HERDR=0
 fi
 case "$AUTO_HERDR" in 1|y|Y|yes) AUTO_HERDR=1 ;; *) AUTO_HERDR=0 ;; esac
 
@@ -137,8 +197,8 @@ export TERM=xterm-256color COLORTERM=truecolor
 export TMPDIR=/tmp
 export XDG_RUNTIME_DIR="/tmp/runtime-\$(id -un)"
 mkdir -p "\$XDG_RUNTIME_DIR" && chmod 700 "\$XDG_RUNTIME_DIR"
-# Less background work on a phone (also disables auto-update: run 'claude update' now and then)
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+# Less background work on a phone; Claude's auto-updater stays on
+export DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1
 alias c='claude'
 alias h='herdr'
 RC
@@ -188,7 +248,11 @@ proot-distro login $DISTRO --user $DEV_USER --shared-tmp "\${BINDS[@]}" \\
 LAUNCH
 chmod +x "$LAUNCH_PATH"
 
-# ---------- 6. Autostart ----------
+# ---------- 6. Autostart (asked after installing) ----------
+# Defaults to the current setting, so re-running and pressing Enter changes nothing.
+grep -q '# >>> debian-autostart >>>' "$TBRC" 2>/dev/null && def=y || def=n
+echo
+ask AUTOSTART "Installed. Open Debian automatically every time Termux starts?" "$def"
 touch "$TBRC"
 if grep -q '# >>> debian-autostart >>>' "$TBRC"; then
   cp "$TBRC" "$TBRC.bak.$(date +%s).$$"
@@ -231,3 +295,5 @@ if [ "$AUTO_HERDR" = 1 ]; then
 else
   echo "Then run 'herdr' and start 'claude' in a pane (or run 'claude' directly)."
 fi
+exit
+}
