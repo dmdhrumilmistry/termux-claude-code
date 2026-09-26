@@ -6,22 +6,28 @@ Claude Code has no Android build (`linux-arm64-android` isn't published), so the
 
 ## Install
 
-From plain Termux (not inside Debian):
+One-liner, from plain Termux (not inside Debian):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dmdhrumilmistry/termux-claude-code/main/termux-claude-setup.sh | bash
+```
+
+Or download it first, if you'd like to read it before running:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/dmdhrumilmistry/termux-claude-code/main/termux-claude-setup.sh
 bash termux-claude-setup.sh
 ```
 
-The script asks one question: whether Termux should open Debian automatically every time it starts. Everything else runs without asking. On a re-run the question defaults to your current setting, so pressing Enter changes nothing.
+The script shows a banner and a list of what it will install, then asks **Proceed?** Nothing changes until you say yes. After installing, it asks whether Termux should open Debian automatically every time it starts. On a re-run that question defaults to your current setting, so pressing Enter changes nothing.
 
-To answer up front, or to set up herdr autostart (which isn't asked):
+To skip the prompts, or to set up herdr autostart (which isn't asked), pass options. With the one-liner, put variables before `bash` and flags after `bash -s --`, e.g. `curl ... | AUTOSTART=1 bash -s -- -y`. With a downloaded copy:
 
 ```bash
 AUTOSTART=1 bash termux-claude-setup.sh     # open Debian when Termux starts
 AUTOSTART=0 bash termux-claude-setup.sh     # don't (removes it if enabled)
 AUTO_HERDR=1 bash termux-claude-setup.sh    # also start herdr when entering Debian
-bash termux-claude-setup.sh -y              # keep the current setting, no prompt
+bash termux-claude-setup.sh -y              # no prompts; keeps the current autostart setting
 ```
 
 `AUTO_HERDR` keeps its current setting unless you set it, and is off on a first run.
@@ -45,7 +51,7 @@ Ways out of the autostarts:
 - A `dev` launcher. It holds a wake lock while Debian is open, shares `/tmp`, and binds your Termux home to `~/termux` and phone storage to `~/sdcard` (run `termux-setup-storage` first for storage).
 - Optional autostart into Debian, and optional herdr autostart once inside.
 - Termux extra keys: Esc, Tab, Ctrl, Alt and arrows. Skipped if you already have your own `extra-keys`.
-- `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. This also turns off auto-updates, so run `claude update` now and then.
+- `DISABLE_TELEMETRY=1` and `DISABLE_ERROR_REPORTING=1` for less background work on the phone. Claude's auto-updater stays on.
 
 ## Android 12+: phantom process killer
 
